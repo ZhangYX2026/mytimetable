@@ -51,6 +51,7 @@ boot('脚本开始');
 /* ---------------- 1. 数据层 ---------------- */
 
 const STORAGE_KEY = 'my-timetable.v1';
+const DATA_VERSION = 1;
 const DOW_CN = ['日', '一', '二', '三', '四', '五', '六'];
 const WEEK_CN = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const WEEK_LABEL = { all: '', odd: '单周', even: '双周' };
@@ -61,6 +62,7 @@ function defaultSettings() {
     startMin: 8 * 60,
     periodMin: 45,
     breaks: [5, 5, 5, 50, 5, 5, 5, 5, 5, 5, 5],
+    termName: '2026 年秋季学期',
     termStart: '2026-09-07'          // 学期第 1 周的周一（用来算单双周）
   };
   s.periodTimes = buildTimesFrom(s);  // 每节课的起止时间（分钟数，可逐节改）
@@ -205,7 +207,7 @@ function renderDiag() {
     + ' | 节假日=' + data.holidays.length
     + ' | 现在=' + t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate())
     + ' 周' + DOW_CN[t.getDay()] + ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes())
-    + ' 第' + weekNumber(t) + '周(' + weekKind(t) + ')'
+    + ' | ' + weekText(t)
     + ' | 课间=' + (data.settings.breaks || []).join('/')
     + ' | 节次时间=' + periodRange(1).start + '-' + periodRange(data.settings.periods).end
     + ' | 有事=' + (data.events || []).length
@@ -276,6 +278,28 @@ function weekOffset(date) {
 }
 function weekNumber(date) { return weekOffset(date) + 1; }
 function weekKind(date) { return weekNumber(date) % 2 === 0 ? 'even' : 'odd'; }
+
+// 人话版的"这是第几周"：还没开学就不显示负数
+function weekText(date) {
+  const n = weekNumber(date);
+  if (n >= 1) return '第 ' + n + ' 周 · ' + (weekKind(date) === 'odd' ? '单周' : '双周');
+  const term = parseDateKey(data.settings.termStart);
+  if (!term) return '未设置学期';
+  const days = Math.ceil((startOfDay(term) - startOfDay(date)) / 86400000);
+  if (days <= 0) return '开学前';
+  if (days <= 14) return '还有 ' + days + ' 天开学';
+  return '还没开学';
+}
+
+// 学期名（没填就按开始日期凑一个）
+function termName() {
+  const s = data.settings;
+  if (s.termName) return s.termName;
+  const d = parseDateKey(s.termStart);
+  if (!d) return '';
+  const m = d.getMonth() + 1;
+  return d.getFullYear() + ' 年' + (m >= 2 && m <= 7 ? '春季' : '秋季') + '学期';
+}
 
 /* ---------------- 3. 课表推算（含单双周过滤） ---------------- */
 
@@ -354,10 +378,23 @@ function makeupLabel(mk) {
   return '补第 ' + mk.week + ' 周' + WEEK_CN[mk.weekday] + '的课';
 }
 
+const TERM_MONDAY = (() => {
+  const d = parseDateKey((DEFAULT_DATA.settings.termStart));
+  return d ? startOfDay(d) : null;
+})();
+
+// 这一天在开学前吗（开学前统一不上课，避免"负周次"还排出课来）
+function beforeTerm(date) {
+  const term = parseDateKey(data && data.settings ? data.settings.termStart : '');
+  if (!term) return false;
+  return startOfDay(date) < startOfDay(term);
+}
+
 // 这一天实际要上的课：调休优先，然后看节假日，最后是常规课表
 function coursesOn(date) {
   const mk = makeupOn(date);
   if (mk) return makeupCoursesFor(date);
+  if (beforeTerm(date)) return [];
   if (isHoliday(date)) return [];
   return data.courses
     .filter((c) => c.day === dayOfWeek(date) && courseMatchesWeek(c, date))
@@ -567,6 +604,12 @@ function renderNow(now, current, next) {
       + WEEK_CN[dayOfWeek(next.date)] + ' ' + minToText(next.start);
     return;
   }
+  if (beforeTerm(now)) {
+    const term = parseDateKey(data.settings.termStart);
+    const days = Math.ceil((startOfDay(term) - startOfDay(now)) / 86400000);
+    state.textContent = '还没开学 · 距离开学还有 ' + days + ' 天（开学后课表才会开始）';
+    return;
+  }
   if (isWeekend(now)) {
     state.textContent = next
       ? '周末 · 下次上课 ' + (next.date.getMonth() + 1) + '月' + next.date.getDate() + '日 '
@@ -748,7 +791,7 @@ function renderCalendar() {
   }
   const y = calMonth.getFullYear();
   const m = calMonth.getMonth();
-  $('cal-title').textContent = y + ' 年 ' + (m + 1) + ' 月 · 第 ' + weekNumber(calMonth) + ' 周起';
+  $('cal-title').textContent = termName() + ' · ' + y + ' 年 ' + (m + 1) + ' 月 · ' + weekText(calMonth);
 
   const grid = $('cal-grid');
   grid.innerHTML = '';
@@ -869,7 +912,7 @@ function renderCalDay() {
   const sub = document.createElement('p');
   sub.className = 'cal-day-sub' + (holiday && !mk ? ' is-holiday' : '') + (mk ? ' is-makeup' : '');
   sub.textContent = (mk ? '📚 调休：' + makeupLabel(mk) + '（不上当天的常规课）' : (holiday ? '🎉 ' + holiday.name + '（不上课）' : ''))
-    + ' · 第 ' + weekNumber(date) + ' 周 · ' + (weekKind(date) === 'odd' ? '单周' : '双周');
+    + ' · ' + weekText(date);
   box.appendChild(sub);
 
   const list = coursesOn(date);
@@ -1160,6 +1203,7 @@ function newDraft() {
   return {
     periods: s.periods,
     periodTimes: times,
+    termName: s.termName || '',
     termStart: s.termStart,
     holidays: data.holidays.map((h) => ({ date: h.date, name: h.name })),
     makeups: JSON.parse(JSON.stringify(data.makeups || [])),
@@ -1192,14 +1236,39 @@ const Settings = {
     sel.innerHTML = '';
     for (let p = 4; p <= 20; p++) sel.appendChild(new Option(p + ' 节', String(p)));
     sel.value = String(stDraft.periods);
+    $('st-term-name').value = stDraft.termName || '';
     $('st-term').value = stDraft.termStart || '';
+    const now = currentTime();
+    $('st-term-today').value = now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate())
+      + ' 周' + DOW_CN[now.getDay()];
     $('st-batch').hidden = true;
 
+    this.renderTermInfo();
     this.renderClock();
     this.renderHolidays();
     this.renderMiniCal();
     $('st-err').hidden = true;
     $('settings').hidden = false;
+  },
+
+  // 学期信息：现在算第几周、或者还有几天开学
+  renderTermInfo() {
+    const box = $('st-term-info');
+    const term = parseDateKey(stDraft.termStart);
+    if (!term) {
+      box.textContent = '还没设置第 1 周的周一，单双周没法算。';
+      return;
+    }
+    const today = startOfDay(currentTime());
+    const termMonday = startOfDay(term);
+    const days = Math.round((today - termMonday) / 86400000);
+    if (days < 0) {
+      box.textContent = '距离开学还有 ' + (-days) + ' 天。开学前，单双周按"第 1 周"往后推算，界面上会显示"还没开学"。';
+      return;
+    }
+    const week = Math.floor(days / 7) + 1;
+    box.textContent = '今天是 ' + (term.getMonth() + 1) + ' 月 ' + term.getDate() + ' 日之后的第 '
+      + (days + 1) + ' 天 → 现在是第 ' + week + ' 周（' + (week % 2 === 0 ? '双周' : '单周') + '）。';
   },
 
   // 每节课一行：自己填开始和结束时间，行下面标出和上一节之间空多少分钟
@@ -1447,6 +1516,7 @@ const Settings = {
     data.settings = {
       periods,
       periodTimes: draftTimes().map((t) => ({ start: t.start, end: t.end })),
+      termName: stDraft.termName || '',
       termStart: stDraft.termStart || data.settings.termStart
     };
     // 顺手把老的三个字段也更新一下，方便以后导出/排查
@@ -1588,7 +1658,7 @@ const MKChoice = {
     $('mk-choice-title').textContent = '这一天怎么安排？';
     $('mk-choice-sub').textContent = d
       ? (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 · 周' + DOW_CN[d.getDay()]
-        + '（第 ' + weekNumber(d) + ' 周 · ' + (weekKind(d) === 'odd' ? '单周' : '双周') + '）'
+        + '（' + weekText(d) + '）'
         + (existing ? ' · 已有调休：' + makeupLabel(existing) : '')
       : key;
     $('mk-choice-remove').hidden = !existing;
@@ -1605,9 +1675,9 @@ const MKRec = {
     sel.innerHTML = '';
     for (let i = 1; i <= 7; i++) sel.appendChild(new Option(WEEK_CN[i], String(i)));
     sel.value = String(dayOfWeek(d) === 6 || dayOfWeek(d) === 7 ? 1 : dayOfWeek(d));
-    $('mkr-week').value = String(weekNumber(d));
+    $('mkr-week').value = String(Math.max(1, weekNumber(d)));
     $('mkr-date').textContent = (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 · 周' + DOW_CN[d.getDay()]
-      + '（这天本身是第 ' + weekNumber(d) + ' 周 · ' + (weekKind(d) === 'odd' ? '单周' : '双周') + '）';
+      + '（这天是 ' + weekText(d) + '）';
     $('mkr-err').hidden = true;
     this.preview();
     $('mk-rec').hidden = false;
@@ -1673,6 +1743,321 @@ function addMakeupOn(key) {
   if (!stDraft) stDraft = newDraft();
   const existing = stDraft.makeups.find((m) => m.date === key) || null;
   MKChoice.open(key, existing);
+}
+
+/* ---------------- 10e. 备份：导出 / 导入 / 分享码 ---------------- */
+
+const CODE_COMPRESSED = 'V1:';   // 压缩版分享码
+const CODE_TEXT = 'T1:';         // 纯文本版分享码（浏览器不支持压缩时用）
+
+// 打包出要备份的内容
+function buildBundle() {
+  return {
+    app: 'my-timetable',
+    version: DATA_VERSION,
+    exportedAt: new Date().toISOString(),
+    settings: JSON.parse(JSON.stringify(data.settings)),
+    courses: JSON.parse(JSON.stringify(data.courses)),
+    holidays: JSON.parse(JSON.stringify(data.holidays || [])),
+    makeups: JSON.parse(JSON.stringify(data.makeups || [])),
+    events: JSON.parse(JSON.stringify(data.events || []))
+  };
+}
+
+// 检查一份导入数据是不是我们的备份，返回它（不合格返回 null）
+function validateBundle(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (!obj.settings || !Array.isArray(obj.courses)) return null;
+  return {
+    app: obj.app || 'my-timetable',
+    version: obj.version || 1,
+    exportedAt: obj.exportedAt || null,
+    settings: ensureSettings(Object.assign(defaultSettings(), obj.settings)),
+    courses: obj.courses.filter((c) => c && typeof c.name === 'string' && typeof c.day === 'number' && typeof c.period === 'number'),
+    holidays: Array.isArray(obj.holidays) ? obj.holidays.filter((h) => h && parseDateKey(h.date)) : [],
+    makeups: Array.isArray(obj.makeups) ? obj.makeups.filter((m) => m && parseDateKey(m.date)) : [],
+    events: Array.isArray(obj.events) ? obj.events.filter((e) => e && parseDateKey(e.date)) : []
+  };
+}
+
+function bundleSummary(b) {
+  const dates = [];
+  if (b.exportedAt) {
+    const d = new Date(b.exportedAt);
+    if (!isNaN(d.getTime())) {
+      dates.push('导出于 ' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+        + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()));
+    }
+  }
+  const first = b.settings.periodTimes && b.settings.periodTimes[0];
+  const last = b.settings.periodTimes && b.settings.periodTimes[b.settings.periods - 1];
+  return (dates.length ? dates.join(' · ') + '\n' : '')
+    + '课程 ' + b.courses.length + ' 节 · 一天 ' + b.settings.periods + ' 节'
+    + (first && last ? '（' + minToText(first.start) + '–' + minToText(last.end) + '）' : '')
+    + '\n节假日 ' + b.holidays.length + ' 天 · 调休 ' + b.makeups.length + ' 天 · 临时有事 ' + b.events.length + ' 条'
+    + '\n学期：' + (b.settings.termName || '（未命名）') + '，第 1 周周一 ' + (b.settings.termStart || '未设置');
+}
+
+// 把当前数据应用成一份备份（mode: replace 覆盖 / merge 合并）
+function applyBundle(b, mode) {
+  if (mode === 'replace') {
+    data.settings = b.settings;
+    data.courses = b.courses.slice();
+    data.holidays = b.holidays.slice();
+    data.makeups = b.makeups.slice();
+    data.events = b.events.slice();
+  } else {
+    // 合并：以导入的为主，重复的（同一天同一节）用导入的覆盖
+    data.settings = b.settings;
+    b.courses.forEach((c) => {
+      data.courses = data.courses.filter((x) => !(x.day === c.day && x.period === c.period));
+      data.courses.push(c);
+    });
+    b.holidays.forEach((h) => {
+      data.holidays = data.holidays.filter((x) => x.date !== h.date);
+      data.holidays.push(h);
+    });
+    b.makeups.forEach((m) => {
+      data.makeups = data.makeups.filter((x) => x.date !== m.date);
+      data.makeups.push(m);
+    });
+    b.events.forEach((e) => {
+      if (!data.events.some((x) => x.id === e.id)) data.events.push(e);
+    });
+  }
+  data.courses.sort((x, y) => (x.day - y.day) || (x.period - y.period));
+  data.holidays.sort((a, b2) => a.date.localeCompare(b2.date));
+  data.makeups.sort((a, b2) => a.date.localeCompare(b2.date));
+  data.events.sort((a, b2) => (a.date + a.start).localeCompare(b2.date + b2.start));
+  refreshHueMap();
+  saveData();
+  refreshPanels();
+  tick();
+}
+
+/* 分享码：优先用浏览器自带压缩（短很多），不行就退回纯文本 */
+
+function bytesToBase64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
+function base64ToBytes(b64) {
+  const s = atob(b64);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+async function deflateText(text) {
+  if (typeof CompressionStream !== 'function') return null;
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function inflateText(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return await new Response(stream).text();
+}
+
+async function encodeBundle(b) {
+  const json = JSON.stringify(b);
+  try {
+    const packed = await deflateText(json);
+    if (packed) return CODE_COMPRESSED + bytesToBase64(packed);
+  } catch (e) { /* 退回纯文本 */ }
+  return CODE_TEXT + bytesToBase64(new TextEncoder().encode(json));
+}
+
+async function decodeCode(raw) {
+  const code = String(raw || '').trim().replace(/\s+/g, '');
+  if (!code) throw new Error('还没粘贴内容');
+  if (code.startsWith(CODE_COMPRESSED)) {
+    if (typeof DecompressionStream !== 'function') throw new Error('这个浏览器不支持解压分享码，请改用备份文件');
+    return await inflateText(base64ToBytes(code.slice(CODE_COMPRESSED.length)));
+  }
+  if (code.startsWith(CODE_TEXT)) {
+    return new TextDecoder().decode(base64ToBytes(code.slice(CODE_TEXT.length)));
+  }
+  if (code.startsWith('{')) return code;      // 直接粘了一整段 JSON
+  throw new Error('这串内容看不懂（应该以 V1: 或 T1: 开头）');
+}
+
+const BackupPanel = {
+  pending: null,     // 检查通过的待导入数据
+  pendingKind: '',
+
+  open() {
+    $('bk-summary').textContent = bundleSummary(buildBundle());
+    $('bk-code').value = '';
+    $('bk-code-info').textContent = '';
+    $('bk-import').value = '';
+    $('bk-preview').hidden = true;
+    $('bk-err').hidden = true;
+    this.pending = null;
+    $('bk-replace').disabled = true;
+    $('bk-merge').disabled = true;
+    $('backup-panel').hidden = false;
+  },
+
+  close() { $('backup-panel').hidden = true; },
+
+  download() {
+    const text = JSON.stringify(buildBundle(), null, 2);
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const now = currentTime();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '课表备份-' + dateKey(now) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    flashHint('备份文件已下载（' + Math.round(text.length / 1024) + ' KB），建议存到微信收藏或网盘');
+  },
+
+  async makeCode() {
+    const box = $('bk-code');
+    box.value = '正在生成…';
+    try {
+      const code = await encodeBundle(buildBundle());
+      box.value = code;
+      $('bk-code-info').textContent = '共 ' + code.length + ' 个字'
+        + (code.startsWith(CODE_COMPRESSED) ? '（压缩版）' : '（纯文本版，稍长）')
+        + ' · 长按全选复制，或点左边的按钮';
+    } catch (e) {
+      box.value = '';
+      $('bk-err').hidden = false;
+      $('bk-err').textContent = '生成分享码失败：' + e.message;
+    }
+  },
+
+  async copy() {
+    const txt = $('bk-code').value;
+    if (!txt || txt === '正在生成…') { flashHint('先点「生成分享码」'); return; }
+    try {
+      await navigator.clipboard.writeText(txt);
+      flashHint('分享码已复制，去微信粘给自己或同学吧');
+    } catch (e) {
+      $('bk-code').select();
+      flashHint('这个浏览器不让自动复制，已经帮你全选，按 Ctrl+C 即可');
+    }
+  },
+
+  // 检查：能解析、能看出里面有什么
+  async check() {
+    const err = $('bk-err');
+    err.hidden = true;
+    const preview = $('bk-preview');
+    let text = $('bk-import').value.trim();
+
+    // 没粘东西但是选了文件？文件在 file 事件里已经读进来了
+    if (!text && !this.pending) {
+      err.textContent = '先粘贴分享码，或者选一个备份文件';
+      err.hidden = false;
+      return false;
+    }
+
+    if (text) {
+      try {
+        text = await decodeCode(text);
+      } catch (e) {
+        this.pending = null;
+        $('bk-replace').disabled = true;
+        $('bk-merge').disabled = true;
+        preview.hidden = false;
+        preview.className = 'conflict-box is-bad';
+        preview.textContent = '✗ ' + e.message;
+        return false;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        this.pending = null;
+        $('bk-replace').disabled = true;
+        $('bk-merge').disabled = true;
+        preview.hidden = false;
+        preview.className = 'conflict-box is-bad';
+        preview.textContent = '✗ 内容不是合法的备份数据（可能复制时少了一段）';
+        return false;
+      }
+      const bundle = validateBundle(parsed);
+      if (!bundle) {
+        this.pending = null;
+        $('bk-replace').disabled = true;
+        $('bk-merge').disabled = true;
+        preview.hidden = false;
+        preview.className = 'conflict-box is-bad';
+        preview.textContent = '✗ 这串内容不像课程表的备份（缺少课程或作息数据）';
+        return false;
+      }
+      this.pending = bundle;
+    }
+
+    preview.hidden = false;
+    preview.className = 'conflict-box is-good';
+    preview.innerHTML = '';
+    const head = document.createElement('b');
+    head.textContent = '✓ 可以导入，里面有：';
+    preview.appendChild(head);
+    bundleSummary(this.pending).split('\n').forEach((line) => {
+      const div = document.createElement('div');
+      div.className = 'conflict-line';
+      div.textContent = line;
+      preview.appendChild(div);
+    });
+    $('bk-replace').disabled = false;
+    $('bk-merge').disabled = false;
+    return true;
+  },
+
+  apply(mode) {
+    if (!this.pending) return;
+    const b = this.pending;
+    const n = b.courses.length;
+    applyBundle(b, mode);
+    this.close();
+    flashHint((mode === 'replace' ? '已用备份替换：' : '已合并备份：')
+      + n + ' 节课 · 节假日 ' + b.holidays.length + ' 天');
+  }
+};
+
+/* 自测：走一遍"导出 → 分享码 → 解析 → 导入" */
+async function runBackupSelfTest() {
+  const out = [];
+  try {
+    const bundle = buildBundle();
+    out.push('导出:' + bundle.courses.length + '课/' + bundle.holidays.length + '假');
+    const fileText = JSON.stringify(bundle, null, 2);
+    out.push('备份文件:' + Math.round(fileText.length / 1024) + 'KB');
+
+    const code = await encodeBundle(bundle);
+    out.push('分享码:' + code.length + '字 ' + (code.startsWith(CODE_COMPRESSED) ? '压缩' : '文本'));
+
+    const back = await decodeCode(code);
+    const parsed = validateBundle(JSON.parse(back));
+    out.push('解析:' + (parsed ? parsed.courses.length + '课' : '失败'));
+    out.push('第1节:' + (parsed ? minToText(parsed.settings.periodTimes[0].start) + '-' + minToText(parsed.settings.periodTimes[0].end) : '-'));
+
+    // 真导入一次（合并模式，模拟"用同学的课表"）：改一门课的名字再导入
+    parsed.courses.push({ day: 7, period: 1, name: '导入测试课', room: 'X101', hue: 200, weeks: 'all' });
+    applyBundle(parsed, 'merge');
+    out.push('导入后:' + data.courses.length + '课');
+    const hit = data.courses.find((c) => c.name === '导入测试课');
+    out.push('找到导入课:' + (hit ? '是' : '否'));
+
+    // 收拾干净，别污染演示数据
+    data.courses = data.courses.filter((c) => c.name !== '导入测试课');
+    saveData();
+    tick();
+  } catch (e) {
+    out.push('异常:' + e.name + ' ' + e.message);
+  }
+  $('diag').hidden = false;
+  $('diag').textContent = 'BKTEST ' + out.join(' | ');
 }
 
 /* ---------------- 11. 交互 ---------------- */
@@ -1822,6 +2207,18 @@ function init() {
   $('st-term').addEventListener('change', () => {
     const d = parseDateKey($('st-term').value);
     if (d) stDraft.termStart = $('st-term').value;
+    Settings.renderTermInfo();
+  });
+  $('st-term-name').addEventListener('input', () => {
+    stDraft.termName = $('st-term-name').value.trim();
+  });
+  $('st-term-thisweek').addEventListener('click', () => {
+    const now = startOfDay(currentTime());
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (dayOfWeek(now) - 1));
+    stDraft.termStart = dateKey(monday);
+    $('st-term').value = stDraft.termStart;
+    Settings.renderTermInfo();
+    flashHint('已把第 1 周的周一设为 ' + stDraft.termStart + '（本周一）');
   });
   $('st-batch-toggle').addEventListener('click', () => {
     const box = $('st-batch');
@@ -1864,6 +2261,47 @@ function init() {
   $('ev-cancel').addEventListener('click', () => EventPanel.close());
   $('event-panel').addEventListener('click', (e) => { if (e.target === $('event-panel')) EventPanel.close(); });
 
+  // 备份与分享
+  $('btn-backup').addEventListener('click', () => BackupPanel.open());
+  $('bk-close').addEventListener('click', () => BackupPanel.close());
+  $('bk-close2').addEventListener('click', () => BackupPanel.close());
+  $('backup-panel').addEventListener('click', (e) => { if (e.target === $('backup-panel')) BackupPanel.close(); });
+  $('bk-download').addEventListener('click', () => BackupPanel.download());
+  $('bk-make-code').addEventListener('click', () => BackupPanel.makeCode());
+  $('bk-copy').addEventListener('click', () => BackupPanel.copy());
+  $('bk-check').addEventListener('click', () => BackupPanel.check());
+  $('bk-replace').addEventListener('click', () => BackupPanel.apply('replace'));
+  $('bk-merge').addEventListener('click', () => BackupPanel.apply('merge'));
+  $('bk-file').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const err = $('bk-err');
+    err.hidden = true;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        const bundle = validateBundle(parsed);
+        if (!bundle) throw new Error('这个文件不是课程表的备份');
+        BackupPanel.pending = bundle;
+        $('bk-import').value = '';
+        BackupPanel.check();
+        flashHint('已读取文件：' + file.name);
+      } catch (ex) {
+        BackupPanel.pending = null;
+        $('bk-replace').disabled = true;
+        $('bk-merge').disabled = true;
+        err.textContent = '读文件失败：' + ex.message;
+        err.hidden = false;
+      }
+    };
+    reader.onerror = () => {
+      err.textContent = '读文件失败，换个文件试试';
+      err.hidden = false;
+    };
+    reader.readAsText(file);
+  });
+
   // 调休：选择方式
   $('mk-choice-recurring').addEventListener('click', () => {
     $('mk-choice').hidden = true;
@@ -1900,6 +2338,7 @@ function init() {
     if (e.key !== 'Escape') return;
     if (!$('editor').hidden) Editor.close();
     else if (!$('event-panel').hidden) EventPanel.close();
+    else if (!$('backup-panel').hidden) BackupPanel.close();
     else if (!$('mk-rec').hidden) $('mk-rec').hidden = true;
     else if (!$('mk-choice').hidden) MKChoice.close();
     else if (!$('settings').hidden) $('settings').hidden = true;
@@ -1926,6 +2365,9 @@ function init() {
     }
   }
   if (has('settings')) Settings.open();
+  if (has('bkopen')) BackupPanel.open();
+  // 自测：导出 → 生成分享码 → 解析回来 → 导入，验证整条链路
+  if (DIAG && has('bktest')) runBackupSelfTest();
   if (has('evopen')) {
     const now = currentTime();
     const todays = eventsOn(now);
@@ -2030,7 +2472,17 @@ function setupOffline() {
     return;
   }
   navigator.serviceWorker.register('./sw.js', { scope: './' }).then(
-    () => { if (DIAG) boot('离线缓存已开启'); },
+    (reg) => {
+      if (DIAG) boot('离线缓存已开启');
+      // 有新版本时：后台更新完自动刷新一次，免得手机上一只看到旧版
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (reloaded || !navigator.serviceWorker.controller) return;
+        reloaded = true;
+        location.reload();
+      });
+      if (reg.update) reg.update();
+    },
     (e) => { if (DIAG) boot('离线缓存注册失败：' + e.message); }
   );
 }

@@ -25,6 +25,7 @@
     </div>
     <div class="topbar-actions">
       <button id="btn-event" class="btn btn-red" type="button">＋ 临时有事</button>
+      <button id="btn-backup" class="btn" type="button">备份</button>
       <button id="btn-table" class="btn" type="button" aria-expanded="false">全部课程</button>
       <button id="btn-cal" class="btn" type="button" aria-expanded="false">日历</button>
       <button id="btn-edit" class="btn btn-solid" type="button" aria-pressed="false">编辑课程</button>
@@ -195,16 +196,32 @@
       </div>
 
       <div class="editor-body">
+        <div class="term-box">
+          <p class="batch-title">学期</p>
+          <div class="field-row three">
+            <label class="field">
+              <span class="field-label">学期名称（随便写，只影响显示）</span>
+              <input id="st-term-name" type="text" maxlength="20" placeholder="例如：2026 年秋季学期">
+            </label>
+            <label class="field">
+              <span class="field-label">第 1 周的周一（算单双周的基准）</span>
+              <input id="st-term" type="date">
+            </label>
+            <label class="field">
+              <span class="field-label">今天</span>
+              <input id="st-term-today" type="text" readonly>
+            </label>
+          </div>
+          <p id="st-term-info" class="hint">—</p>
+          <button id="st-term-thisweek" class="mini-btn" type="button">把「第 1 周的周一」设为本周一</button>
+        </div>
+
         <div class="field-row">
           <label class="field">
             <span class="field-label">一天几节课</span>
             <select id="st-periods"></select>
           </label>
-          <label class="field">
-            <span class="field-label">学期第 1 周的周一（用来算单双周）</span>
-            <input id="st-term" type="date">
-          </label>
-          <button id="st-batch-toggle" class="btn btn-ghost2 batch-toggle" type="button">⚙ 批量设置</button>
+          <button id="st-batch-toggle" class="btn btn-ghost2 batch-toggle" type="button">⚙ 批量设置节次时间</button>
         </div>
 
         <div id="st-batch" class="batch-box" hidden>
@@ -306,6 +323,60 @@
         <span class="spacer"></span>
         <button id="ev-cancel" class="btn btn-ghost2" type="button">取消</button>
         <button id="ev-save" class="btn btn-red" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 备份：导出 / 导入 / 分享码 -->
+  <div id="backup-panel" class="overlay" hidden>
+    <div class="editor editor-wide" role="dialog" aria-modal="true" aria-labelledby="bk-title">
+      <div class="editor-head">
+        <h2 id="bk-title" class="editor-title">备份与分享</h2>
+        <button id="bk-close" class="icon-btn" type="button" aria-label="关闭">×</button>
+      </div>
+
+      <div class="editor-body">
+        <p id="bk-summary" class="bk-summary">—</p>
+
+        <div class="bk-box">
+          <p class="batch-title">① 导出（存起来，或者发给同学）</p>
+          <div class="bk-btns">
+            <button id="bk-download" class="btn btn-solid" type="button">下载备份文件（.json）</button>
+            <button id="bk-make-code" class="btn btn-ghost2" type="button">生成分享码</button>
+          </div>
+          <p class="hint">备份文件包含：全部课程、作息时间、节次时间、节假日、调休、临时有事。</p>
+          <textarea id="bk-code" class="bk-code" rows="4" readonly
+            placeholder="点上面的「生成分享码」，会得到一串字（V1:… 压缩版 / T1:… 文本版）。复制它，用微信发给自己或同学，粘贴到下面就能还原。"></textarea>
+          <div class="bk-btns">
+            <button id="bk-copy" class="mini-btn" type="button">复制分享码</button>
+            <span id="bk-code-info" class="hint"></span>
+          </div>
+        </div>
+
+        <div class="bk-box">
+          <p class="batch-title">② 导入（换手机、清过数据、或者用同学的课表）</p>
+          <div class="bk-btns">
+            <label class="fake-file">
+              <input id="bk-file" type="file" accept=".json,application/json">
+              <span>选择备份文件…</span>
+            </label>
+          </div>
+          <textarea id="bk-import" class="bk-code" rows="3"
+            placeholder="……或者把分享码粘贴在这里"></textarea>
+          <div id="bk-preview" class="conflict-box" hidden>—</div>
+          <div class="bk-btns">
+            <button id="bk-check" class="mini-btn" type="button">先检查一下</button>
+            <button id="bk-replace" class="btn btn-danger" type="button" disabled>替换我现在的课表</button>
+            <button id="bk-merge" class="btn btn-ghost2" type="button" disabled>合并（保留我已有的）</button>
+          </div>
+          <p class="hint">「替换」= 清掉现在的，用导入的完全覆盖；「合并」= 两边都有，重复的以后来的为准。</p>
+          <p id="bk-err" class="ed-err" hidden></p>
+        </div>
+      </div>
+
+      <div class="editor-foot">
+        <span class="spacer"></span>
+        <button id="bk-close2" class="btn btn-ghost2" type="button">关闭</button>
       </div>
     </div>
   </div>
