@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>我的课程表</title>
+<meta name="description" content="看现在上什么课、下一节去哪。数据全部存在你自己的设备上。">
+<meta name="theme-color" content="#3b82f6">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+<!-- 加到手机主屏幕后，像 App 一样全屏打开 -->
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="课程表">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-title">
+      <span class="dot"></span>
+      <span>我的课程表</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-event" class="btn btn-red" type="button">＋ 临时有事</button>
+      <button id="btn-table" class="btn" type="button" aria-expanded="false">全部课程</button>
+      <button id="btn-cal" class="btn" type="button" aria-expanded="false">日历</button>
+      <button id="btn-edit" class="btn btn-solid" type="button" aria-pressed="false">编辑课程</button>
+      <button id="btn-settings" class="btn" type="button">作息设置</button>
+    </div>
+  </header>
+
+  <div id="save-hint" class="save-hint" hidden></div>
+
+  <!-- 全部课程：行=时间，列=星期 -->
+  <section id="table-panel" class="panel" hidden>
+    <div class="panel-head">
+      <h2 class="panel-title">全部课程 <span id="table-sub" class="panel-sub"></span></h2>
+      <span id="table-tip" class="panel-tip">开启「编辑课程」后，点格子即可修改</span>
+    </div>
+    <div class="grid-wrap">
+      <div id="grid" class="grid"></div>
+    </div>
+  </section>
+
+  <!-- 日历：节假日 + 调休 + 每天有什么课 -->
+  <section id="cal-panel" class="panel" hidden>
+    <div class="panel-head">
+      <h2 class="panel-title">日历 <span id="cal-title" class="panel-sub"></span></h2>
+      <div class="cal-nav">
+        <button id="cal-prev" class="mini-btn" type="button">←</button>
+        <button id="cal-today" class="mini-btn" type="button">回到今天</button>
+        <button id="cal-next" class="mini-btn" type="button">→</button>
+      </div>
+    </div>
+    <div class="cal-body">
+      <div>
+        <div id="cal-grid" class="cal-grid"></div>
+        <div id="cal-legend" class="cal-legend"></div>
+      </div>
+      <aside id="cal-day" class="cal-day"></aside>
+    </div>
+  </section>
+
+  <main class="stage">
+
+    <!-- 左 / 上：此刻 -->
+    <section class="block block-now">
+      <div class="block-head">
+        <span class="block-label">现在</span>
+        <span id="clock" class="clock">--:--</span>
+      </div>
+
+      <div id="now-state" class="now-state">正在读取课表…</div>
+      <h1 id="now-name" class="now-name">—</h1>
+
+      <div id="now-progress" class="progress" hidden>
+        <div id="now-progress-bar" class="progress-bar"></div>
+      </div>
+
+      <p id="now-meta" class="now-meta"></p>
+
+      <div class="note-box">
+        <span class="note-label">备注</span>
+        <p id="now-note" class="note-text">—</p>
+      </div>
+    </section>
+
+    <!-- 右 / 下：接下来 -->
+    <section class="block block-next">
+      <div class="block-head">
+        <span class="block-label">接下来</span>
+        <span id="gap-chip" class="gap-chip" hidden>—</span>
+      </div>
+
+      <h2 id="next-name" class="next-name">—</h2>
+      <p id="next-meta" class="next-meta"></p>
+
+      <div class="note-box note-box-soft">
+        <span class="note-label">备注</span>
+        <p id="next-note" class="note-text">—</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span id="foot-hint">数据自动保存在这台设备的浏览器里 · 演示数据为虚构 · </span><a href="?mock=2026-10-05T09:12">预览"正在上课"的样子</a>
+  </footer>
+
+  <!-- 编辑课程 -->
+  <div id="editor" class="overlay" hidden>
+    <div class="editor" role="dialog" aria-modal="true" aria-labelledby="ed-title">
+      <div class="editor-head">
+        <h2 id="ed-title" class="editor-title">编辑课程</h2>
+        <button id="ed-close" class="icon-btn" type="button" aria-label="关闭">×</button>
+      </div>
+
+      <div class="editor-body">
+        <div class="field-row three">
+          <label class="field">
+            <span class="field-label">星期</span>
+            <select id="ed-day"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">从第几节</span>
+            <select id="ed-start"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">上到第几节</span>
+            <select id="ed-end"></select>
+          </label>
+        </div>
+        <p id="ed-time" class="ed-time">—</p>
+
+        <label class="field">
+          <span class="field-label">课程名称</span>
+          <input id="ed-name" type="text" maxlength="24" placeholder="例如：高等数学 A" autocomplete="off">
+        </label>
+
+        <div class="field-row three">
+          <label class="field">
+            <span class="field-label">老师</span>
+            <input id="ed-teacher" type="text" maxlength="16" placeholder="例如：李国强" autocomplete="off">
+          </label>
+          <label class="field">
+            <span class="field-label">教室</span>
+            <input id="ed-room" type="text" maxlength="20" placeholder="例如：教三 305" autocomplete="off">
+          </label>
+          <label class="field">
+            <span class="field-label">上课周次</span>
+            <select id="ed-weeks">
+              <option value="all">每周都上</option>
+              <option value="odd">只上单周</option>
+              <option value="even">只上双周</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="field">
+          <span class="field-label">这门课的颜色（点色块选，或拖滑块微调）</span>
+          <div id="ed-swatches" class="swatches"></div>
+          <div id="ed-preview" class="color-preview">
+            <span class="color-dot"></span>
+            <input id="ed-hue" class="hue-slider" type="range" min="0" max="359" step="1" value="210">
+            <span id="ed-hue-text" class="hue-text">210</span>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">备注（老师脾气、要带什么、考核方式…）</span>
+          <textarea id="ed-note" rows="3" maxlength="300" placeholder="随便写，只要你自己看得懂"></textarea>
+        </label>
+
+        <p id="ed-err" class="ed-err" hidden></p>
+      </div>
+
+      <div class="editor-foot">
+        <button id="ed-delete" class="btn btn-danger" type="button" hidden>删除这节课</button>
+        <span class="spacer"></span>
+        <button id="ed-cancel" class="btn btn-ghost2" type="button">取消</button>
+        <button id="ed-save" class="btn btn-solid" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 作息设置 -->
+  <div id="settings" class="overlay" hidden>
+    <div class="editor editor-wide" role="dialog" aria-modal="true" aria-labelledby="st-title">
+      <div class="editor-head">
+        <h2 id="st-title" class="editor-title">作息与节假日设置</h2>
+        <button id="st-close" class="icon-btn" type="button" aria-label="关闭">×</button>
+      </div>
+
+      <div class="editor-body">
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">一天几节课</span>
+            <select id="st-periods"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">学期第 1 周的周一（用来算单双周）</span>
+            <input id="st-term" type="date">
+          </label>
+          <button id="st-batch-toggle" class="btn btn-ghost2 batch-toggle" type="button">⚙ 批量设置</button>
+        </div>
+
+        <div id="st-batch" class="batch-box" hidden>
+          <p class="batch-title">批量重排：按下面的规则重算全部节次的时间（会覆盖上面逐节填的时间）</p>
+          <div class="field-row three">
+            <label class="field">
+              <span class="field-label">第 1 节开始</span>
+              <input id="st-batch-start" type="time" value="08:00">
+            </label>
+            <label class="field">
+              <span class="field-label">每节多少分钟</span>
+              <input id="st-batch-len" type="number" min="20" max="120" step="5" value="45">
+            </label>
+            <label class="field">
+              <span class="field-label">课间多少分钟</span>
+              <input id="st-batch-gap" type="number" min="0" max="180" step="5" value="5">
+            </label>
+          </div>
+          <button id="st-batch-apply" class="btn btn-solid" type="button">按这个规则重排全部节次</button>
+          <p class="hint">重排之后，你还可以在上面逐节微调（比如把午休那一段单独改长）。</p>
+        </div>
+
+        <div class="field">
+          <span class="field-label">每节课的起止时间（自己想怎么排就怎么排，时长可以都不一样）</span>
+          <div id="st-clock" class="clock-rows"></div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">节假日与调休：点日期 = 标为节假日；右键或长按 = 加调休（补课）</span>
+          <div class="holi-body">
+            <div class="holi-left">
+              <div class="mini-head">
+                <button id="hm-prev" class="mini-btn" type="button">←</button>
+                <b id="hm-title">—</b>
+                <button id="hm-next" class="mini-btn" type="button">→</button>
+              </div>
+              <div id="hm-grid" class="mini-cal"></div>
+              <p class="hint">红=节假日 · 蓝=调休 · 金=今天</p>
+            </div>
+            <div class="holi-right">
+              <div id="st-holiday-list" class="holiday-list"></div>
+              <div id="st-makeup-list" class="holiday-list makeup-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <p id="st-err" class="ed-err" hidden></p>
+      </div>
+
+      <div class="editor-foot">
+        <span class="spacer"></span>
+        <button id="st-cancel" class="btn btn-ghost2" type="button">取消</button>
+        <button id="st-save" class="btn btn-solid" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 临时有事 -->
+  <div id="event-panel" class="overlay" hidden>
+    <div class="editor" role="dialog" aria-modal="true" aria-labelledby="ev-title-text">
+      <div class="editor-head editor-head-red">
+        <h2 id="ev-title-text" class="editor-title">添加临时事件</h2>
+        <button id="ev-close" class="icon-btn" type="button" aria-label="关闭">×</button>
+      </div>
+
+      <div class="editor-body">
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">日期</span>
+            <input id="ev-date" type="date">
+          </label>
+          <label class="field">
+            <span class="field-label">开始时间</span>
+            <input id="ev-start" type="time" step="300">
+          </label>
+          <label class="field">
+            <span class="field-label">结束时间</span>
+            <input id="ev-end" type="time" step="300">
+          </label>
+        </div>
+
+        <div id="ev-conflict" class="conflict-box">—</div>
+
+        <label class="field">
+          <span class="field-label">什么事</span>
+          <input id="ev-title-input" type="text" maxlength="24" placeholder="例如：去医院 / 面试 / 请假回家" autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span class="field-label">备注（要带什么、找谁、电话…）</span>
+          <textarea id="ev-note-input" rows="3" maxlength="200" placeholder="随便写，只要你自己看得懂"></textarea>
+        </label>
+
+        <p id="ev-err" class="ed-err" hidden></p>
+      </div>
+
+      <div class="editor-foot">
+        <button id="ev-delete" class="btn btn-danger" type="button" hidden>删除这个事件</button>
+        <span class="spacer"></span>
+        <button id="ev-cancel" class="btn btn-ghost2" type="button">取消</button>
+        <button id="ev-save" class="btn btn-red" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 点日期后：选哪种调休方式 -->
+  <div id="mk-choice" class="overlay" hidden>
+    <div class="chooser" role="dialog" aria-modal="true">
+      <h3 id="mk-choice-title">这一天怎么安排？</h3>
+      <p class="chooser-sub" id="mk-choice-sub">—</p>
+      <button id="mk-choice-recurring" class="choice-btn" type="button">
+        <b>按周几补课</b>
+        <span>照某一天的课表上（可选第几周，自动区分单双周）</span>
+      </button>
+      <button id="mk-choice-special" class="choice-btn" type="button">
+        <b>临时课表</b>
+        <span>只在这一天上几门指定的课，和常规课表无关</span>
+      </button>
+      <div class="chooser-foot">
+        <button id="mk-choice-remove" class="btn btn-danger" type="button" hidden>取消这天的调休</button>
+        <span class="spacer"></span>
+        <button id="mk-choice-cancel" class="btn btn-ghost2" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 按周几补课 -->
+  <div id="mk-rec" class="overlay" hidden>
+    <div class="editor" role="dialog" aria-modal="true">
+      <div class="editor-head">
+        <h2 class="editor-title">按周几补课</h2>
+        <button id="mkr-close" class="icon-btn" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="editor-body">
+        <p class="ed-time" id="mkr-date">—</p>
+        <label class="field">
+          <span class="field-label">按哪一天的课表上</span>
+          <select id="mkr-weekday"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">参照第几周（决定单双周；下面的表会跟着变）</span>
+          <input id="mkr-week" type="number" min="1" max="30" step="1" value="1">
+        </label>
+        <div class="field">
+          <span class="field-label">这一天要上的课</span>
+          <div id="mkr-preview" class="preview-clock"></div>
+        </div>
+        <p id="mkr-err" class="ed-err" hidden></p>
+      </div>
+      <div class="editor-foot">
+        <span class="spacer"></span>
+        <button id="mkr-cancel" class="btn btn-ghost2" type="button">取消</button>
+        <button id="mkr-save" class="btn btn-solid" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <p id="boot" class="boot"></p>
+  <p id="diag" class="diag" hidden></p>
+
+<script src="app.js"></script>
+</body>
+</html>
