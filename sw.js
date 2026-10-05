@@ -10,7 +10,7 @@
      —— 这行不需要你手动改，改代码的人（我）会一起改好。
    ============================================================ */
 
-const CACHE = 'timetable-v3';
+const CACHE = 'timetable-v4';
 const ASSETS = [
   './',
   './index.html',

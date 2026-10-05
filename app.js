@@ -63,7 +63,8 @@ function defaultSettings() {
     periodMin: 45,
     breaks: [5, 5, 5, 50, 5, 5, 5, 5, 5, 5, 5],
     termName: '2026 年秋季学期',
-    termStart: '2026-09-07'          // 学期第 1 周的周一（用来算单双周）
+    termStart: '2026-09-07',         // 第 1 周的周一（算单双周的基准）
+    termEnd: '2027-01-10'            // 学期最后一天（默认按 18 周算，可改）
   };
   s.periodTimes = buildTimesFrom(s);  // 每节课的起止时间（分钟数，可逐节改）
   return s;
@@ -279,10 +280,18 @@ function weekOffset(date) {
 function weekNumber(date) { return weekOffset(date) + 1; }
 function weekKind(date) { return weekNumber(date) % 2 === 0 ? 'even' : 'odd'; }
 
-// 人话版的"这是第几周"：还没开学就不显示负数
+// 人话版的"这是第几周"：开学前和放假后都不显示数字
 function weekText(date) {
+  if (afterTerm(date)) {
+    const end = parseDateKey(data.settings.termEnd);
+    const days = Math.round((startOfDay(date) - startOfDay(end)) / 86400000);
+    return days <= 14 ? '已放假 ' + days + ' 天' : '已放假';
+  }
   const n = weekNumber(date);
-  if (n >= 1) return '第 ' + n + ' 周 · ' + (weekKind(date) === 'odd' ? '单周' : '双周');
+  if (n >= 1) {
+    const total = totalWeeks();
+    return '第 ' + n + (total ? ' / ' + total : '') + ' 周 · ' + (weekKind(date) === 'odd' ? '单周' : '双周');
+  }
   const term = parseDateKey(data.settings.termStart);
   if (!term) return '未设置学期';
   const days = Math.ceil((startOfDay(term) - startOfDay(date)) / 86400000);
@@ -299,6 +308,41 @@ function termName() {
   if (!d) return '';
   const m = d.getMonth() + 1;
   return d.getFullYear() + ' 年' + (m >= 2 && m <= 7 ? '春季' : '秋季') + '学期';
+}
+
+// 整个学期一共几周（没设结束日期就返回 0）
+function totalWeeks() {
+  const a = parseDateKey(data.settings.termStart);
+  const b = parseDateKey(data.settings.termEnd);
+  if (!a || !b) return 0;
+  const days = Math.round((startOfDay(b) - startOfDay(a)) / 86400000);
+  return Math.max(1, Math.ceil((days + 1) / 7));
+}
+
+// 学期进度：现在第几周 / 一共几周 / 还剩几天
+function termProgress(date) {
+  const a = parseDateKey(data.settings.termStart);
+  const b = parseDateKey(data.settings.termEnd);
+  if (!a) return null;
+  const today = startOfDay(date);
+  const start = startOfDay(a);
+  const end = b ? startOfDay(b) : null;
+  const total = totalWeeks();
+  const week = Math.max(0, Math.floor((today - start) / (7 * 86400000)) + 1);
+  return {
+    start,
+    end,
+    total,
+    week: week < 1 ? 0 : week,
+    daysLeft: end ? Math.round((end - today) / 86400000) : null
+  };
+}
+
+// 这一天在学期结束之后吗
+function afterTerm(date) {
+  const end = parseDateKey(data && data.settings ? data.settings.termEnd : '');
+  if (!end) return false;
+  return startOfDay(date) > startOfDay(end);
 }
 
 /* ---------------- 3. 课表推算（含单双周过滤） ---------------- */
@@ -395,6 +439,7 @@ function coursesOn(date) {
   const mk = makeupOn(date);
   if (mk) return makeupCoursesFor(date);
   if (beforeTerm(date)) return [];
+  if (afterTerm(date)) return [];          // 学期结束了，也不排课
   if (isHoliday(date)) return [];
   return data.courses
     .filter((c) => c.day === dayOfWeek(date) && courseMatchesWeek(c, date))
@@ -608,6 +653,10 @@ function renderNow(now, current, next) {
     const term = parseDateKey(data.settings.termStart);
     const days = Math.ceil((startOfDay(term) - startOfDay(now)) / 86400000);
     state.textContent = '还没开学 · 距离开学还有 ' + days + ' 天（开学后课表才会开始）';
+    return;
+  }
+  if (afterTerm(now)) {
+    state.textContent = '学期结束 · ' + termName() + '已经放假（改「作息设置 → 学期」里的结束日期可以恢复）';
     return;
   }
   if (isWeekend(now)) {
@@ -1205,6 +1254,7 @@ function newDraft() {
     periodTimes: times,
     termName: s.termName || '',
     termStart: s.termStart,
+    termEnd: s.termEnd || '',
     holidays: data.holidays.map((h) => ({ date: h.date, name: h.name })),
     makeups: JSON.parse(JSON.stringify(data.makeups || [])),
     holiMonth: null
@@ -1238,8 +1288,9 @@ const Settings = {
     sel.value = String(stDraft.periods);
     $('st-term-name').value = stDraft.termName || '';
     $('st-term').value = stDraft.termStart || '';
+    $('st-term-end').value = stDraft.termEnd || '';
     const now = currentTime();
-    $('st-term-today').value = now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate())
+    $('st-term-today').value = '今天 ' + now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate())
       + ' 周' + DOW_CN[now.getDay()];
     $('st-batch').hidden = true;
 
@@ -1251,24 +1302,41 @@ const Settings = {
     $('settings').hidden = false;
   },
 
-  // 学期信息：现在算第几周、或者还有几天开学
+  // 学期信息：现在第几周 / 一共几周 / 还剩几天
   renderTermInfo() {
     const box = $('st-term-info');
-    const term = parseDateKey(stDraft.termStart);
-    if (!term) {
+    const start = parseDateKey(stDraft.termStart);
+    if (!start) {
       box.textContent = '还没设置第 1 周的周一，单双周没法算。';
       return;
     }
+    const end = parseDateKey(stDraft.termEnd);
     const today = startOfDay(currentTime());
-    const termMonday = startOfDay(term);
-    const days = Math.round((today - termMonday) / 86400000);
-    if (days < 0) {
-      box.textContent = '距离开学还有 ' + (-days) + ' 天。开学前，单双周按"第 1 周"往后推算，界面上会显示"还没开学"。';
+    const total = end
+      ? Math.max(1, Math.ceil((Math.round((startOfDay(end) - startOfDay(start)) / 86400000) + 1) / 7))
+      : 0;
+    const daysFromStart = Math.round((today - startOfDay(start)) / 86400000);
+
+    if (daysFromStart < 0) {
+      box.textContent = '距离开学还有 ' + (-daysFromStart) + ' 天（开学前不排课，界面会显示"还没开学"）。';
       return;
     }
-    const week = Math.floor(days / 7) + 1;
-    box.textContent = '今天是 ' + (term.getMonth() + 1) + ' 月 ' + term.getDate() + ' 日之后的第 '
-      + (days + 1) + ' 天 → 现在是第 ' + week + ' 周（' + (week % 2 === 0 ? '双周' : '单周') + '）。';
+    const week = Math.floor(daysFromStart / 7) + 1;
+
+    if (end && startOfDay(end) < today) {
+      box.textContent = '学期已经结束 ' + Math.round((today - startOfDay(end)) / 86400000) + ' 天了，'
+        + '这段时间不排课。要恢复就把"学期最后一天"往后改。';
+      return;
+    }
+
+    let text = '现在是第 ' + week + (total ? ' / ' + total : '') + ' 周（' + (week % 2 === 0 ? '双周' : '单周') + '）';
+    if (end) {
+      const left = Math.round((startOfDay(end) - today) / 86400000);
+      text += '，距离放假还有 ' + left + ' 天（最后一天 ' + stDraft.termEnd + '）';
+    } else {
+      text += '。没填"学期最后一天"，所以不会判断放假。';
+    }
+    box.textContent = text;
   },
 
   // 每节课一行：自己填开始和结束时间，行下面标出和上一节之间空多少分钟
@@ -1517,7 +1585,8 @@ const Settings = {
       periods,
       periodTimes: draftTimes().map((t) => ({ start: t.start, end: t.end })),
       termName: stDraft.termName || '',
-      termStart: stDraft.termStart || data.settings.termStart
+      termStart: stDraft.termStart || data.settings.termStart,
+      termEnd: stDraft.termEnd || ''
     };
     // 顺手把老的三个字段也更新一下，方便以后导出/排查
     const first = data.settings.periodTimes[0];
@@ -1795,7 +1864,9 @@ function bundleSummary(b) {
     + '课程 ' + b.courses.length + ' 节 · 一天 ' + b.settings.periods + ' 节'
     + (first && last ? '（' + minToText(first.start) + '–' + minToText(last.end) + '）' : '')
     + '\n节假日 ' + b.holidays.length + ' 天 · 调休 ' + b.makeups.length + ' 天 · 临时有事 ' + b.events.length + ' 条'
-    + '\n学期：' + (b.settings.termName || '（未命名）') + '，第 1 周周一 ' + (b.settings.termStart || '未设置');
+    + '\n学期：' + (b.settings.termName || '（未命名）')
+    + '，第 1 周周一 ' + (b.settings.termStart || '未设置')
+    + (b.settings.termEnd ? '，最后一天 ' + b.settings.termEnd : '（未设结束日期）');
 }
 
 // 把当前数据应用成一份备份（mode: replace 覆盖 / merge 合并）
@@ -2209,9 +2280,25 @@ function init() {
     if (d) stDraft.termStart = $('st-term').value;
     Settings.renderTermInfo();
   });
+  $('st-term-end').addEventListener('change', () => {
+    const d = parseDateKey($('st-term-end').value);
+    stDraft.termEnd = d ? $('st-term-end').value : '';
+    Settings.renderTermInfo();
+  });
   $('st-term-name').addEventListener('input', () => {
     stDraft.termName = $('st-term-name').value.trim();
   });
+  // 一键：结束日期 = 开始后第 N 周
+  const setEndWeeks = (weeks) => {
+    const start = parseDateKey(stDraft.termStart);
+    if (!start) { flashHint('先设置「第 1 周的周一」'); return; }
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + weeks * 7 - 1);
+    stDraft.termEnd = dateKey(end);
+    $('st-term-end').value = stDraft.termEnd;
+    Settings.renderTermInfo();
+  };
+  $('st-term-18w').addEventListener('click', () => setEndWeeks(18));
+  $('st-term-20w').addEventListener('click', () => setEndWeeks(20));
   $('st-term-thisweek').addEventListener('click', () => {
     const now = startOfDay(currentTime());
     const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (dayOfWeek(now) - 1));
@@ -2366,6 +2453,12 @@ function init() {
   }
   if (has('settings')) Settings.open();
   if (has('bkopen')) BackupPanel.open();
+  // 自测用：网址加 #termend=2020-01-01 就假装学期已经结束（不改你的存档）
+  const te = DIAG ? qp('termend') : null;
+  if (te && parseDateKey(te)) {
+    data.settings.termEnd = te;
+    boot('已把学期结束日期临时设为 ' + te);
+  }
   // 自测：导出 → 生成分享码 → 解析回来 → 导入，验证整条链路
   if (DIAG && has('bktest')) runBackupSelfTest();
   if (has('evopen')) {

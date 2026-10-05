@@ -208,12 +208,17 @@
               <input id="st-term" type="date">
             </label>
             <label class="field">
-              <span class="field-label">今天</span>
-              <input id="st-term-today" type="text" readonly>
+              <span class="field-label">学期最后一天（这天之后就放假）</span>
+              <input id="st-term-end" type="date">
             </label>
           </div>
           <p id="st-term-info" class="hint">—</p>
-          <button id="st-term-thisweek" class="mini-btn" type="button">把「第 1 周的周一」设为本周一</button>
+          <div class="bk-btns">
+            <button id="st-term-thisweek" class="mini-btn" type="button">第 1 周 = 本周一</button>
+            <button id="st-term-18w" class="mini-btn" type="button">结束日期 = 开始后第 18 周</button>
+            <button id="st-term-20w" class="mini-btn" type="button">第 20 周</button>
+            <input id="st-term-today" type="text" readonly class="today-badge">
+          </div>
         </div>
 
         <div class="field-row">

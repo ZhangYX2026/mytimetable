@@ -1165,6 +1165,14 @@ select:focus, input:focus, textarea:focus {
 
 .term-box .mini-btn { align-self: flex-start; }
 .term-box input[readonly] { background: #f1f5fb; color: var(--text-3); }
+.term-box .bk-btns { align-items: center; }
+.term-box .today-badge {
+  width: auto;
+  margin-left: auto;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 9px;
+}
 
 /* ============================================================
    备份与分享
